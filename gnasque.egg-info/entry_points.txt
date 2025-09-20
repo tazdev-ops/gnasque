@@ -1,0 +1,3 @@
+[console_scripts]
+gnasque = gnasque.cli:main
+gnasque-gui = gnasque.gui_tk:main

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gnasque"
+version = "2.1.0"
+description = "Gnasque - MASQUE + WARP toolkit (CLI, GUI, Web UI)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{ name = "Gnasque Maintainers" }]
+keywords = ["masque", "warp", "wireguard", "vpn", "sing-box", "cloudflare", "proxy"]
+dependencies = []
+
+[project.scripts]
+gnasque = "gnasque.cli:main"
+gnasque-gui = "gnasque.gui_tk:main"
+
+[tool.setuptools.packages.find]
+include = ["gnasque*"]
+exclude = ["aur*"]
+
+[tool.setuptools.package-data]
+"gnasque.webui.static" = ["*.html", "*.js", "*.css"]

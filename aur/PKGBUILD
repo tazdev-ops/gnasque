@@ -1,0 +1,30 @@
+# Maintainer: You <you @example.com>
+pkgname=gnasque
+pkgver=2.1.0
+pkgrel=1
+pkgdesc="Gnasque - MASQUE + WARP toolkit (CLI, GUI, Web UI)"
+arch=('any')
+url="https://example.com/gnasque"
+license=('MIT')
+depends=('python' 'curl')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+optdepends=('usque: MASQUE backend'
+            'sing-box: WARP backend'
+            'wireguard-tools: WARP identity generation'
+            'warp-plus: Optional Warp-Plus backend'
+            'tk: GUI')
+source=()
+sha256sums=()
+
+build() {
+  python -m build
+}
+
+package() {
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 aur/gnasque.desktop "$pkgdir/usr/share/applications/gnasque.desktop"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+# Note: This PKGBUILD expects to be run in the project root (local packaging).
+# In AUR, replace source=() with the actual source tarball or git repo.

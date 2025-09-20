@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Gnasque GUI
+Comment=Gnasque - MASQUE + WARP toolkit
+Exec=gnasque-gui
+Icon=utilities-network
+Terminal=false
+Categories=Network;Utility;

@@ -12,6 +12,37 @@ from gnasque.core import (
     default_sing_box_path, default_usque_path, default_warp_plus_path,
 )
 
+def _which(cmd):
+    from shutil import which as _w
+    return _w(cmd)
+
+def _get_setcap_bin():
+    for p in ("setcap", "/usr/sbin/setcap", "/sbin/setcap"):
+        if _which(p): return p
+    return None
+
+def _has_cap_net_admin(path: str) -> bool:
+    try:
+        import subprocess
+        out = subprocess.run(["getcap", path], capture_output=True, text=True)
+        return out.returncode == 0 and "cap_net_admin" in (out.stdout or "")
+    except Exception:
+        return False
+
+def _pkexec_setcap(path: str) -> bool:
+    import subprocess
+    setcap_bin = _get_setcap_bin()
+    if not setcap_bin:
+        messagebox.showerror("Missing setcap", "Could not find setcap (try installing libcap).\nExample (Arch): pacman -S libcap")
+        return False
+    try:
+        # This will trigger a polkit password dialog if a polkit agent is running
+        res = subprocess.run(["pkexec", setcap_bin, "cap_net_admin,cap_net_raw+ep", path])
+        return res.returncode == 0
+    except Exception as e:
+        messagebox.showerror("pkexec failed", str(e))
+        return False
+
 APP_TITLE = "Gnasque GUI"
 
 class GnasqueGUI(tk.Tk):
@@ -301,6 +332,17 @@ class GnasqueGUI(tk.Tk):
                 self.controller = start_warp_with_monitor(opts, self._log)
                 self.w_status.set(f"Running Warp-Plus at {self.w_bind.get()}")
             else:
+                # Check TUN privileges if TUN mode is enabled
+                if self.w_tun.get():
+                    sing_path = self.w_sing.get()
+                    if os.name != "nt" and not _has_cap_net_admin(sing_path):
+                        if messagebox.askyesno("TUN privileges required",
+                                               "TUN mode needs sing-box to have CAP_NET_ADMIN.\nGrant capability now (pkexec setcap)?"):
+                            if not _pkexec_setcap(sing_path):
+                                return
+                        else:
+                            messagebox.showinfo("Hint", "You can also grant it manually:\n  sudo setcap cap_net_admin,cap_net_raw+ep <sing-box>")
+                            return
                 opts = WarpOptions(
                     bind=bind,
                     sing_box_path=self.w_sing.get(),
@@ -312,7 +354,9 @@ class GnasqueGUI(tk.Tk):
                     apply_iran_rules=self.w_iran_rules.get(),
                     rules_backend=self.w_rules_backend.get(),
                     apply_adblock_rules=self.w_adblock.get(),
-                    adblock_filter_path=self.w_adblock_filter.get()
+                    adblock_filter_path=self.w_adblock_filter.get(),
+                    tun_mode=self.w_tun.get(),
+                    tun_dns=self.w_tun_dns.get()
                 )
                 self.controller = start_warp_with_monitor(opts, self._log)
                 self.w_status.set(f"Running WARP at {self.w_bind.get()}")
@@ -341,6 +385,17 @@ class GnasqueGUI(tk.Tk):
                     gool_mode=self.w_gool_mode.get()
                 )
             else:
+                # Check TUN privileges if TUN mode is enabled
+                if self.w_tun.get():
+                    sing_path = self.w_sing.get()
+                    if os.name != "nt" and not _has_cap_net_admin(sing_path):
+                        if messagebox.askyesno("TUN privileges required",
+                                               "TUN mode needs sing-box to have CAP_NET_ADMIN.\nGrant capability now (pkexec setcap)?"):
+                            if not _pkexec_setcap(sing_path):
+                                return
+                        else:
+                            messagebox.showinfo("Hint", "You can also grant it manually:\n  sudo setcap cap_net_admin,cap_net_raw+ep <sing-box>")
+                            return
                 warp_opts = WarpOptions(
                     bind=bind,
                     sing_box_path=self.w_sing.get(),
@@ -352,7 +407,9 @@ class GnasqueGUI(tk.Tk):
                     apply_iran_rules=self.w_iran_rules.get(),
                     rules_backend=self.w_rules_backend.get(),
                     apply_adblock_rules=self.w_adblock.get(),
-                    adblock_filter_path=self.w_adblock_filter.get()
+                    adblock_filter_path=self.w_adblock_filter.get(),
+                    tun_mode=self.w_tun.get(),
+                    tun_dns=self.w_tun_dns.get()
                 )
             masque_bind = parse_bind("127.0.0.1:1080")
             masque_ep = self.m_endpoint.get().strip() or None

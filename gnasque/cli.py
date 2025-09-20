@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, os, sys, time, csv, re, concurrent.futures
+import argparse, os, sys, time, csv, re, concurrent.futures, subprocess
 
 from gnasque.core import (
     DEFAULT_TEST_URL, DEFAULT_MASQUE_ENDPOINT,
@@ -12,7 +12,8 @@ from gnasque.core import (
     set_system_proxy, clear_system_proxy, backup_proxy_settings, restore_proxy_settings,
     read_log_ring,
     _metrics_load, get_logger, clear_metrics, fetch_remote_configs,
-    ServerTestOptions, test_and_geo_locate_server, singbox_version
+    ServerTestOptions, test_and_geo_locate_server, singbox_version,
+    load_profiles, save_profile, delete_profile
 )
 
 version = "2.1.0"
@@ -22,6 +23,26 @@ def require_tool(binary: str, hint: str):
     if which(binary) is None:
         print(f"[ERROR] Required tool not found: {binary}\nHint: {hint}", file=sys.stderr)
         sys.exit(1)
+
+def _warn_tun_privileges(sing_box_path: str):
+    try:
+        if os.name == "nt":
+            try:
+                import ctypes
+                if not ctypes.windll.shell32.IsUserAnAdmin():
+                    print("[WARN] TUN mode likely requires Administrator privileges on Windows.")
+            except Exception:
+                print("[WARN] TUN mode may require Administrator privileges on Windows.")
+        else:
+            if hasattr(os, "geteuid") and os.geteuid() != 0:
+                try:
+                    out = subprocess.run(["getcap", sing_box_path], capture_output=True, text=True)
+                    if "cap_net_admin" not in (out.stdout or ""):
+                        print(f"[WARN] TUN mode requires CAP_NET_ADMIN; grant with: sudo setcap cap_net_admin,cap_net_raw+ep {sing_box_path}")
+                except Exception:
+                    print("[WARN] TUN mode may require root or CAP_NET_ADMIN. Example: sudo setcap cap_net_admin,cap_net_raw+ep /usr/bin/sing-box")
+    except Exception:
+        pass
 
 def add_masque_subparser(sub):
     p = sub.add_parser("masque", help="Run MASQUE proxy (usque)")
@@ -50,6 +71,10 @@ def add_warp_subparser(sub):
     p.add_argument("--prefer-country", default="", help="Prefer endpoints from country code (e.g., FR)")
     p.add_argument("--adblock", action="store_true", help="Enable ad-blocking using filter.txt")
     p.add_argument("--adblock-filter", default="filter.txt", help="Path to ad-blocking filter file (default: filter.txt)")
+    p.add_argument("--tun", action="store_true", help="Enable TUN mode (system tunnel)")
+    p.add_argument("--tun-name", default="gnasque-tun", help="TUN interface name")
+    p.add_argument("--tun-addr", default="172.16.0.2/24", help="TUN IPv4/CIDR")
+    p.add_argument("--tun-dns", default="1.1.1.1", help="DNS to use in TUN mode")
     return p
 
 def add_warp_scan_subparser(sub):
@@ -83,6 +108,10 @@ def add_resilient_subparser(sub):
     p.add_argument("--rules-backend", choices=["rule-set","db"], default="rule-set", help="Rules backend")
     p.add_argument("--adblock", action="store_true", help="Enable ad-blocking using filter.txt")
     p.add_argument("--adblock-filter", default="filter.txt", help="Path to ad-blocking filter file (default: filter.txt)")
+    p.add_argument("--tun", action="store_true", help="Enable TUN mode (system tunnel)")
+    p.add_argument("--tun-name", default="gnasque-tun")
+    p.add_argument("--tun-addr", default="172.16.0.2/24")
+    p.add_argument("--tun-dns", default="1.1.1.1")
     return p
 
 def add_web_subparser(sub):
@@ -205,8 +234,14 @@ def run_mode_warp(args):
             rules_backend=rules_backend,
             prefer_country=args.prefer_country or None,
             apply_adblock_rules=args.adblock,
-            adblock_filter_path=args.adblock_filter
+            adblock_filter_path=args.adblock_filter,
+            tun_mode=args.tun,
+            tun_name=args.tun_name,
+            tun_address=args.tun_addr,
+            tun_dns=args.tun_dns
         )
+        if args.tun:
+            _warn_tun_privileges(opts.sing_box_path)
     try:
         ctl = start_warp_with_monitor(opts, cb=lambda s: print(s))
     except Exception as e:
@@ -274,8 +309,14 @@ def run_mode_resilient(args):
             apply_iran_rules=args.iran_rules,
             rules_backend=rules_backend,
             apply_adblock_rules=args.adblock,
-            adblock_filter_path=args.adblock_filter
+            adblock_filter_path=args.adblock_filter,
+            tun_mode=args.tun,
+            tun_name=args.tun_name,
+            tun_address=args.tun_addr,
+            tun_dns=args.tun_dns
         )
+        if args.tun:
+            _warn_tun_privileges(warp_opts.sing_box_path)
     ctl = start_resilient(
         cb=lambda s: print(s),
         masque_endpoint=args.masque_endpoint or None,
@@ -431,20 +472,6 @@ def run_mode_servers(args):
             except Exception as e:
                 print(f"[ERROR] Failed to write results to {args.output}: {e}", file=sys.stderr)
         sys.exit(0)
-
-# Simple profile store
-def load_profiles() -> dict:
-    try: return json.loads(open(os.path.join(cfg_dir(),"profiles.json"),"r",encoding="utf-8").read())
-    except Exception: return {}
-
-def save_profile(name: str, address: str):
-    m = load_profiles(); m[name] = address; ensure_dir(cfg_dir())
-    json.dump(m, open(os.path.join(cfg_dir(),"profiles.json"),"w",encoding="utf-8"), indent=2)
-
-def delete_profile(name: str):
-    m = load_profiles(); 
-    if name in m: del m[name]
-    json.dump(m, open(os.path.join(cfg_dir(),"profiles.json"),"w",encoding="utf-8"), indent=2)
 
 def main():
     parser = argparse.ArgumentParser(prog="gnasque", description="Gnasque - MASQUE + WARP toolkit")

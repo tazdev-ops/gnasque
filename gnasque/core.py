@@ -163,6 +163,13 @@ def _chmod_600(path: str):
         try: os.chmod(path, 0o600)
         except Exception: pass
 
+def _pick_free_tcp_port(ip: str = "127.0.0.1") -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((ip, 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
 # System proxy
 def _proxy_backup_path() -> str:
     return os.path.join(cfg_dir(), "proxy_backup.json")
@@ -437,7 +444,7 @@ def parse_adblock_filter(file_path: str, cb: Optional[LogCB] = None) -> List[str
         with open(file_path, "r", encoding="utf-8") as f:
             for raw in f:
                 s = raw.strip()
-                if not s or s.startswith("!") or s.startswith("[") or s.startswith(" @@"):
+                if not s or s.startswith("!") or s.startswith("[") or s.startswith("@@"):
                     continue
                 if s.startswith("||"):
                     token = s[2:]
@@ -1373,22 +1380,22 @@ def parse_vpn_uri_to_singbox_outbound(uri: str, cb: Optional[LogCB] = None) -> O
             if sni: outbound["sni"] = sni
             return outbound
         if scheme in ("ss","shadowsocks"):
-            rest = uri.split("://",1)[1]
+            rest = uri.split("://", 1)[1]
             if " @" not in rest:
-                decoded = b64_to_str(rest.split("#",1)[0].split("?",1)[0])
-                creds, addr = decoded.rsplit(" @",1)
-                method, password = creds.split(":",1)
-                host2, port2 = addr.split(":",1)
+                decoded = b64_to_str(rest.split("#", 1)[0].split("?", 1)[0])
+                creds, addr = decoded.rsplit(" @", 1)
+                method, password = creds.split(":", 1)
+                host2, port2 = addr.split(":", 1)
                 host, port = host2, int(port2)
             else:
-                auth, addr = rest.split(" @",1)
-                method, password = auth.split(":",1)
-                host = addr.split("#",1)[0].split("?",1)[0]
+                auth, addr = rest.split(" @", 1)
+                method, password = auth.split(":", 1)
+                host = addr.split("#", 1)[0].split("?", 1)[0]
                 if ":" in host:
-                    host, port = host.split(":",1); port = int(port)
+                    host, port = host.split(":", 1); port = int(port)
                 else:
                     port = 8388
-            return {"type":"shadowsocks","server":host,"server_port":int(port),"method":method,"password":password}
+            return {"type": "shadowsocks", "server": host, "server_port": int(port), "method": method, "password": password}
         if scheme in ("hysteria2","hy2"):
             password = unquote(u.username or q.get("password",""))
             outbound = {"type":"hysteria2","server":host,"server_port":int(port),"password":password,"tls": tls_block(q.get("sni"))}
@@ -1410,9 +1417,11 @@ def test_and_geo_locate_server(server: Dict, opts: ServerTestOptions, cb: Option
         return {"server": server, "success": False, "latency_ms": None, "country": None, "error": "unparsable/unsupported"}
     temp_config_path = os.path.join(cfg_dir(), f"singbox_test_{os.getpid()}_{time.time_ns()}.json")
     ensure_parent_dir(temp_config_path)
+    bind_ip = opts.bind[0]
+    local_port = _pick_free_tcp_port(bind_ip)
     cfg = {
         "log": {"level": opts.sb_log_level},
-        "inbounds": [{"type": "socks", "listen": opts.bind[0], "listen_port": opts.bind[1], "udp": True}],
+        "inbounds": [{"type": "socks", "listen": bind_ip, "listen_port": local_port, "udp": True}],
         "outbounds": [outbound, {"type": "direct", "tag": "direct"}, {"type": "block", "tag": "block"}],
         "route": {"auto_detect_interface": True},
         "dns": {"servers": [{"address": opts.dns_ip}]}
@@ -1427,7 +1436,7 @@ def test_and_geo_locate_server(server: Dict, opts: ServerTestOptions, cb: Option
         cmd = [opts.sing_box_path, "run", "-c", temp_config_path]
         _log(cb, "DEBUG", "starting sing-box for test", cmd=" ".join(shlex.quote(x) for x in cmd))
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
-        bind_addr = f"{opts.bind[0]}:{opts.bind[1]}"
+        bind_addr = f"{bind_ip}:{local_port}"
         deadline = time.time() + max(8.0, float(opts.connect_timeout_sec))
         while time.time() < deadline and proc.poll() is None:
             try:
@@ -1466,4 +1475,29 @@ def test_and_geo_locate_server(server: Dict, opts: ServerTestOptions, cb: Option
                 os.remove(temp_config_path)
         except Exception:
             pass
-    return {"server": server, "success": success, "latency_ms": latency_ms, "country": country, "error": error_msg}
+    return {"server": server, "success": success, "success": success, "latency_ms": latency_ms, "country": country, "error": error_msg}
+
+# Simple profile store
+def _profiles_path() -> str:
+    return os.path.join(cfg_dir(), "profiles.json")
+
+def load_profiles() -> dict:
+    try:
+        with open(_profiles_path(), "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_profile(name: str, address: str):
+    m = load_profiles()
+    m[name] = address
+    ensure_dir(cfg_dir())
+    with open(_profiles_path(), "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=2)
+
+def delete_profile(name: str):
+    m = load_profiles()
+    if name in m:
+        del m[name]
+    with open(_profiles_path(), "w", encoding="utf-8") as f:
+        json.dump(m, f, indent=2)
